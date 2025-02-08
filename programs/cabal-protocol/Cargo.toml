@@ -16,8 +16,9 @@ cpi = ["no-entrypoint"]
 default = []
 
 [dependencies]
-anchor-lang = { version = "0.29.0", features = ["init-if-needed"] }
-anchor-spl = "0.29.0"
-solana-program = "1.16.12"
-borsh = "0.10.3" 
-jupiter-cpi = { git = "https://github.com/jup-ag/jupiter-cpi.git", branch = "main" }
+anchor-lang = { version = "=0.28.0", features = ["init-if-needed"] }
+anchor-spl = { version = "=0.28.0", features = ["token"], default-features = false }
+solana-program = "=1.16.18"
+jupiter-cpi = { git = "https://github.com/jup-ag/jupiter-cpi", tag = "v4.0.0", features = ["cpi"] }
+spl-token = { version = "=3.5.0", features = ["no-entrypoint"] }
+borsh = "=1.5.5"
