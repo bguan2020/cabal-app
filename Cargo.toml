@@ -6,15 +6,9 @@ resolver = "2"
 
 # Enforce consistent dependency versions across the workspace.
 [workspace.dependencies]
-borsh = "0.10.4"
-solana-program = "1.16.12"
-anchor-lang = "0.30.0"
-anchor-spl = "0.30.0"
-
-# Use a patch to force solana-program and solana-sdk from Git so that all dependencies resolve to 1.16.x.
-[patch.crates-io]
-solana-program = { git = "https://github.com/solana-labs/solana", tag = "v1.18.26" }
-solana-sdk     = { git = "https://github.com/solana-labs/solana", tag = "v1.18.26" }
+anchor-lang = { version = "=0.28.0", features = ["init-if-needed"] }
+anchor-spl = { version = "=0.28.0", features = ["token"], default-features = false }
+solana-program = "=1.16.18"
 
 [profile.release]
 overflow-checks = true
