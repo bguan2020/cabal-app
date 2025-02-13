@@ -6,7 +6,7 @@ seeds = false
 skip-lint = false
 
 [programs.devnet]
-cabal_protocol = "3jUomWjaKdsxzKt6Tn5DkzeAy3Yw686XDdT8dyWVeVmq"
+cabal_protocol = "Coo9sZodyMccLY47wnZJy3fiTYN7qDsS9pE3YBmwg4sQ"
 
 [registry]
 url = "https://api.apr.dev"
