@@ -3,16 +3,127 @@ use anchor_lang::solana_program::{
     program::{invoke, invoke_signed},
     system_instruction,
 };
-use anchor_spl::token::{self, SyncNative, Token, TokenAccount};
-use std::str::FromStr;
+use anchor_lang::solana_program::{entrypoint::ProgramResult, instruction::Instruction};
 
-declare_id!("5YXX6Fm8nQFcXRHvwGGeo1uK86VtPpzU8Gd8Qr2VgLsT");
+use anchor_spl::token::{self, Mint, SyncNative, Token, TokenAccount};
 
 /// Configuration constants
 const MAX_MEMBERS: usize = 6;
 const MAX_DEPOSITORS: usize = 20;
-const JUPITER_PROGRAM_ID: &str = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
 const FEE_WALLET: &str = "A8aTLejFzPYqFmBtq7586VTfbsroXS4AMAPvtA3DXH8q";
+
+pub const AUTHORITY_SEED: &[u8] = b"authority";
+pub const WSOL_SEED: &[u8] = b"wsol";
+
+mod jupiter {
+    use anchor_lang::declare_id;
+    declare_id!("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4");
+}
+
+#[derive(Clone)]
+pub struct Jupiter;
+
+impl anchor_lang::Id for Jupiter {
+    fn id() -> Pubkey {
+        jupiter::id()
+    }
+}
+
+declare_id!("3jUomWjaKdsxzKt6Tn5DkzeAy3Yw686XDdT8dyWVeVmq");
+
+#[derive(Accounts)]
+#[instruction(buy_in: u64, fee_bps: u16)]
+pub struct CreateCabal<'info> {
+    #[account(
+        init,
+        payer = creator,
+        // 8 bytes for discriminator
+        // size_of::<Pubkey>() for creator
+        // size_of::<u64>() for buy_in
+        // size_of::<u16>() for fee_bps
+        // 4 bytes for vec length
+        // MAX_DEPOSITORS * size of each Deposit struct
+        space = 8 + 32 + 8 + 2 + 4 + (MAX_DEPOSITORS * (32 + 8 + 1))
+    )]
+    pub cabal: Account<'info, Cabal>,
+    #[account(mut)]
+    pub creator: Signer<'info>,
+    /// CHECK: PDA vault for storing SOL
+    #[account(mut, seeds = [b"vault", cabal.key().as_ref()], bump)]
+    pub vault: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct JoinCabal<'info> {
+    #[account(mut)]
+    pub cabal: Account<'info, Cabal>,
+    #[account(mut)]
+    pub member: Signer<'info>,
+    /// CHECK: PDA vault validated by seeds
+    #[account(mut, seeds = [b"vault", cabal.key().as_ref()], bump)]
+    pub vault: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct LurkerDeposit<'info> {
+    #[account(mut)]
+    pub cabal: Account<'info, Cabal>,
+    #[account(mut)]
+    pub lurker: Signer<'info>,
+    /// CHECK: PDA vault validated by seeds
+    #[account(mut, seeds = [b"vault", cabal.key().as_ref()], bump)]
+    pub vault: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct Withdraw<'info> {
+    #[account(mut)]
+    pub cabal: Account<'info, Cabal>,
+    #[account(mut)]
+    pub depositor: Signer<'info>,
+    /// CHECK: PDA vault validated by seeds
+    #[account(mut, seeds = [b"vault", cabal.key().as_ref()], bump)]
+    pub vault: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct Swap<'info> {
+    #[account(mut)]
+    pub cabal: Account<'info, Cabal>,
+    pub member: Signer<'info>,
+    /// CHECK: PDA vault for SOL
+    #[account(mut, seeds = [b"vault", cabal.key().as_ref()], bump)]
+    pub vault_sol: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub vault_wsol: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub vault_token: Account<'info, TokenAccount>,
+    /// CHECK: Fee wallet address is validated in the instruction
+    #[account(mut)]
+    pub fee_wallet: UncheckedAccount<'info>,
+    pub jupiter_program: Program<'info, Jupiter>,
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct SwapToSOL<'info> {
+    #[account(mut, seeds = [AUTHORITY_SEED], bump)]
+    pub program_authority: SystemAccount<'info>,
+    /// CHECK: This may not be initialized yet.
+    #[account(mut, seeds = [WSOL_SEED], bump)]
+    pub program_wsol_account: UncheckedAccount<'info>,
+    pub user_account: Signer<'info>,
+    #[account(mut)]
+    pub sol_mint: Account<'info, Mint>,
+    pub jupiter_program: Program<'info, Jupiter>,
+    pub token_program: Program<'info, Token>,
+    pub system_program: Program<'info, System>,
+}
 
 #[program]
 pub mod cabal_protocol {
@@ -26,6 +137,8 @@ pub mod cabal_protocol {
         buy_in: u64,
         fee_bps: u16,
     ) -> Result<()> {
+        let cabal_key = ctx.accounts.cabal.key();
+        
         let cabal = &mut ctx.accounts.cabal;
         cabal.creator = ctx.accounts.creator.key();
         cabal.buy_in = buy_in;
@@ -54,22 +167,22 @@ pub mod cabal_protocol {
             ],
             &[&[
                 b"vault",
-                ctx.accounts.cabal.key().as_ref(),
-                &[ctx.bumps.vault],
+                cabal_key.as_ref(),
+                &[ctx.bumps["vault"]],
             ]],
         )?;
 
         emit!(CabalCreated {
-            cabal: ctx.accounts.cabal.key(),
+            cabal: cabal_key,
             creator: cabal.creator,
             buy_in,
             fee_bps,
         });
-        
+
         Ok(())
     }
 
-    /// Join as a member with at least the buy_in amount
+    // /// Join as a member with at least the buy_in amount
     pub fn join_cabal(ctx: Context<JoinCabal>, deposit: u64) -> Result<()> {
         let cabal = &mut ctx.accounts.cabal;
 
@@ -109,7 +222,7 @@ pub mod cabal_protocol {
         Ok(())
     }
 
-    /// Deposit as a lurker with any positive amount
+    // Deposit as a lurker with any positive amount
     pub fn lurker_deposit(ctx: Context<LurkerDeposit>, amount: u64) -> Result<()> {
         let cabal = &mut ctx.accounts.cabal;
 
@@ -144,6 +257,8 @@ pub mod cabal_protocol {
 
     /// Withdraw proportional share of vault assets
     pub fn withdraw(ctx: Context<Withdraw>) -> Result<()> {
+        let cabal_key = ctx.accounts.cabal.key();
+        
         let cabal = &mut ctx.accounts.cabal;
         let depositor_key = ctx.accounts.depositor.key();
         let vault = &ctx.accounts.vault;
@@ -153,24 +268,22 @@ pub mod cabal_protocol {
             .iter()
             .position(|d| d.key == depositor_key)
             .ok_or(CabalError::NotDepositor)?;
-        let deposit = cabal.deposits[pos];
+        let deposit = cabal.deposits[pos].clone();
 
-        // Calculate share
+        // Calculate share based on total deposits instead of vault balance
         let total_deposits: u64 = cabal.deposits.iter().map(|d| d.amount).sum();
-        let initial_balance = **vault.to_account_info().lamports.borrow();
-        let share = initial_balance
+        let vault_balance = **vault.to_account_info().lamports.borrow();
+        
+        // Share should be proportional to their deposit amount relative to total deposits
+        let share = vault_balance
             .checked_mul(deposit.amount)
             .and_then(|v| v.checked_div(total_deposits))
             .ok_or(CabalError::ShareCalculationError)?;
-        
+
         require!(share > 0, CabalError::NothingToWithdraw);
 
-        // Security check for vault balance consistency
-        let current_balance = **vault.to_account_info().lamports.borrow();
-        require!(
-            current_balance >= initial_balance,
-            CabalError::VaultBalanceChanged
-        );
+        // Remove depositor BEFORE transfer to prevent reentrancy
+        cabal.deposits.remove(pos);
 
         // Transfer share
         let transfer_ix = system_instruction::transfer(
@@ -187,23 +300,21 @@ pub mod cabal_protocol {
             ],
             &[&[
                 b"vault",
-                ctx.accounts.cabal.key().as_ref(),
-                &[ctx.bumps.vault],
+                cabal_key.as_ref(),
+                &[ctx.bumps["vault"]],
             ]],
         )?;
-
-        // Remove depositor
-        cabal.deposits.remove(pos);
 
         Ok(())
     }
 
-    /// Execute swap through Jupiter
+    // Execute swap through Jupiter
     pub fn swap(
         ctx: Context<Swap>,
         amount: u64,
         slippage_bps: u16,
         quote: u64,
+        route_data: Vec<u8>,
     ) -> Result<()> {
         let cabal = &ctx.accounts.cabal;
         let member_key = ctx.accounts.member.key();
@@ -238,12 +349,15 @@ pub mod cabal_protocol {
             &[&[
                 b"vault",
                 cabal.key().as_ref(),
-                &[ctx.bumps.vault],
+                &[ctx.bumps["vault_sol"]],
             ]],
         )?;
 
         // Convert SOL to wSOL
-        let sync_ix = SyncNative::create_ix(&ctx.accounts.vault_wsol.to_account_info())?;
+        let sync_ix = anchor_spl::token::spl_token::instruction::sync_native(
+            &anchor_spl::token::ID,
+            &ctx.accounts.vault_wsol.key(),
+        )?;
         invoke_signed(
             &sync_ix,
             &[
@@ -253,35 +367,73 @@ pub mod cabal_protocol {
             &[&[
                 b"vault",
                 cabal.key().as_ref(),
-                &[ctx.bumps.vault],
+                &[ctx.bumps["vault_sol"]],
             ]],
         )?;
 
-        // Execute Jupiter swap
+        // Calculate minimum output amount
         let min_out = quote
             .checked_mul((10_000 - slippage_bps).into())
             .and_then(|v| v.checked_div(10_000))
             .ok_or(CabalError::SlippageError)?;
 
-        let cpi_ctx = CpiContext::new(
-            ctx.accounts.jupiter_program.to_account_info(),
-            jupiter::Swap {
-                authority: ctx.accounts.vault_sol.to_account_info(),
-                source_token: ctx.accounts.vault_wsol.to_account_info(),
-                destination_token: ctx.accounts.vault_token.to_account_info(),
-                token_program: ctx.accounts.token_program.to_account_info(),
-                // Additional Jupiter accounts would go here
-            },
-        ).with_signer(&[&[
-            b"vault",
-            cabal.key().as_ref(),
-            &[ctx.bumps.vault],
-        ]]);
-
-        jupiter::swap(cpi_ctx, swap_amount, min_out)?;
+        // Execute Jupiter swap using remaining accounts
+        msg!("Executing Jupiter swap");
+        super::swap_on_jupiter(
+            ctx.remaining_accounts,
+            ctx.accounts.jupiter_program.clone(),
+            route_data,
+            ctx.bumps["vault_sol"],
+        )?;
 
         Ok(())
     }
+
+    pub fn swap_to_sol(ctx: Context<SwapToSOL>, data: Vec<u8>) -> Result<()> {
+        msg!("Swap on Jupiter");
+        super::swap_on_jupiter(
+            ctx.remaining_accounts,
+            ctx.accounts.jupiter_program.clone(),
+            data,
+            ctx.bumps["program_authority"],
+        )?;
+        
+        Ok(())
+    }
+}
+
+// Move swap_on_jupiter outside the module
+pub fn swap_on_jupiter<'info>(
+    remaining_accounts: &[AccountInfo],
+    jupiter_program: Program<'info, Jupiter>,
+    data: Vec<u8>,
+    authority_bump: u8,
+) -> ProgramResult {
+    let accounts: Vec<AccountMeta> = remaining_accounts
+        .iter()
+        .map(|acc| AccountMeta {
+            pubkey: *acc.key,
+            is_signer: acc.is_signer,
+            is_writable: acc.is_writable,
+        })
+        .collect();
+
+    let accounts_infos: Vec<AccountInfo> = remaining_accounts
+        .iter()
+        .map(|acc| AccountInfo { ..acc.clone() })
+        .collect();
+
+    // TODO: Check the first 8 bytes. Only Jupiter Route CPI allowed.
+
+    invoke_signed(
+        &Instruction {
+            program_id: *jupiter_program.key,
+            accounts,
+            data,
+        },
+        &accounts_infos,
+        &[&[AUTHORITY_SEED, &[authority_bump]]],
+    )
 }
 
 // Account structures and data models

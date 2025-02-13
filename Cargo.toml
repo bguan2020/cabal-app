@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "programs/*"
+    "programs/cabal-protocol"
 ]
 resolver = "2"
 

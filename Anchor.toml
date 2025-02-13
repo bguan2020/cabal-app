@@ -1,17 +1,18 @@
 [toolchain]
+anchor_version = "0.28.0"
 
 [features]
 seeds = false
 skip-lint = false
 
-[programs.localnet]
-cabal_protocol = "BMVB1Hx1xcHDujw2ScSxBit163Pke2MpjQWCVmd6YCoS"
+[programs.devnet]
+cabal_protocol = "3jUomWjaKdsxzKt6Tn5DkzeAy3Yw686XDdT8dyWVeVmq"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "Localnet"
+cluster = "devnet"
 wallet = "/Users/unlonely-stream/.config/solana/id.json"
 
 [scripts]
